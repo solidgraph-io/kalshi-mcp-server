@@ -1,0 +1,79 @@
+# kalshi-mcp-server en Dokploy
+#
+# Este archivo va en la raiz de TU FORK de cejor6/kalshi-mcp-server.
+# En Dokploy se crea como servicio tipo COMPOSE (no Application), porque
+# levanta dos contenedores: el servidor MCP y su Redis.
+#
+# Las variables van en la pestana "Environment" de Dokploy, NO aqui.
+# El dominio se anade en la pestana "Domains" -> servicio: kalshi-mcp,
+# puerto: 8000. Dokploy inyecta las labels de Traefik automaticamente;
+# por eso este archivo no las trae (ponerlas a mano choca con las suyas).
+
+services:
+  kalshi-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Alternativa sin build (imagen upstream, sin fork — no recomendado):
+    # image: ghcr.io/cejor6/kalshi-mcp-server:0.3.3
+    restart: unless-stopped
+    environment:
+      # --- Transporte ---
+      MCP_TRANSPORT: http
+      PORT: 8000
+
+      # --- Credenciales Kalshi ---
+      KALSHI_API_KEY_ID: ${KALSHI_API_KEY_ID}
+      KALSHI_PRIVATE_KEY_PEM: ${KALSHI_PRIVATE_KEY_PEM}
+
+      # --- Fase 1: produccion en SOLO LECTURA ---
+      KALSHI_ENV: ${KALSHI_ENV:-prod}
+      KALSHI_ALLOW_PROD: ${KALSHI_ALLOW_PROD:-1}
+      KALSHI_TRADING_ENABLED: ${KALSHI_TRADING_ENABLED:-0}
+
+      # --- Limites de riesgo (aplican solo si se habilita el trading) ---
+      MCP_MAX_ORDER_SIZE_USD: ${MCP_MAX_ORDER_SIZE_USD:-10}
+      MCP_DAILY_LIMIT_USD: ${MCP_DAILY_LIMIT_USD:-50}
+      MCP_MAX_CONTRACTS_PER_ORDER: ${MCP_MAX_CONTRACTS_PER_ORDER:-50}
+      MCP_CASH_RESERVE_USD: ${MCP_CASH_RESERVE_USD:-0}
+      # En 0: el asistente NO puede subirse sus propios topes en caliente.
+      MCP_ALLOW_RUNTIME_LIMIT_TUNING: ${MCP_ALLOW_RUNTIME_LIMIT_TUNING:-0}
+      MCP_ALLOW_COMBO_CREATION: ${MCP_ALLOW_COMBO_CREATION:-0}
+
+      # --- OAuth: obligatorio en HTTP. Sin esto el servidor NO arranca. ---
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      MCP_BASE_URL: ${MCP_BASE_URL}
+      MCP_ALLOWED_GITHUB_LOGINS: ${MCP_ALLOWED_GITHUB_LOGINS}
+      MCP_JWT_SIGNING_KEY: ${MCP_JWT_SIGNING_KEY}
+      MCP_REDIS_URL: redis://redis:6379/0
+      MCP_REDIS_COLLECTION_PREFIX: kalshi-mcp
+
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - dokploy-network
+    # Sin `ports:` a proposito — Redis solo accesible dentro de la red.
+
+volumes:
+  redis-data:
+
+networks:
+  dokploy-network:
+    external: true
